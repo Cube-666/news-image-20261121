@@ -1,39 +1,55 @@
-// "The World Today" — Saturday 21 November 2026 in one image.
-// Node 22, standard library only. The entry image lives beside this file as
-// entry.png: a front-page newspaper with the day's verified news. This program
-// hands that exact image to the grader by copying it byte for byte into the
-// output folder, so two runs always produce identical bytes. No network, no
-// clock, no randomness — just one file copy.
-//
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// The World Today — Saturday 21 November 2026.
+// Entry for make.fun "Sum up 21 November's world news in one image"
+// (news-image-20261121). The front page artwork is entry.png, drawn
+// up front; this script's only job is to place a byte-exact copy of
+// it at /output/entry.png so the grader can read it.
 
-import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SOURCE = new URL('./entry.png', import.meta.url);
-const OUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-const MAX_BYTES = 1024 * 1024;
+// The intake caps a single file at 1 MiB.
+const SIZE_LIMIT = 1024 * 1024;
 
-// A whole PNG starts with its 8-byte signature — refuse anything else, so a
-// truncated or misnamed file can never reach the judge as entry.png.
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-if (!readFileSync(SOURCE).subarray(0, 8).equals(PNG_SIGNATURE)) {
-  throw new Error('entry.png does not start with the PNG signature — refusing to hand in a broken image');
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const artwork = resolve(scriptDir, "entry.png");
+const destination = resolve("/output", "entry.png");
+
+function fingerprint(data) {
+  return createHash("sha256").update(data).digest("hex");
 }
 
-const size = statSync(SOURCE).size;
-if (size > MAX_BYTES) {
-  throw new Error(`entry.png is ${size} bytes, over the 1 MiB gate — refusing to hand in a rejected image`);
+function main() {
+  const meta = statSync(artwork);
+  if (!meta.isFile()) {
+    throw new Error("entry.png is not a regular file");
+  }
+  if (meta.size > SIZE_LIMIT) {
+    throw new Error(`entry.png is ${meta.size} bytes, above the 1 MiB cap`);
+  }
+
+  const original = readFileSync(artwork);
+  const expected = fingerprint(original);
+
+  mkdirSync("/output", { recursive: true });
+  copyFileSync(artwork, destination);
+
+  // Re-read the source as well as the copy: if the artwork changed
+  // mid-run, the two digests would disagree and the run must fail
+  // rather than hand in a half-written image.
+  const sourceNow = readFileSync(artwork);
+  const delivered = readFileSync(destination);
+  if (
+    delivered.length !== original.length ||
+    sourceNow.length !== original.length ||
+    fingerprint(delivered) !== expected ||
+    fingerprint(sourceNow) !== expected
+  ) {
+    throw new Error("the copy at /output/entry.png does not match entry.png");
+  }
+
+  console.log(`wrote /output/entry.png (${delivered.length} bytes, sha256 ${expected})`);
 }
 
-mkdirSync(OUT_DIR, { recursive: true });
-copyFileSync(SOURCE, join(OUT_DIR, 'entry.png'));
-
-// Integrity check: the handed-in copy must be the same file, byte for byte.
-// A size match alone could hide a different image, so compare sha256 digests.
-const digest = (b) => createHash('sha256').update(b).digest('hex');
-if (digest(readFileSync(join(OUT_DIR, 'entry.png'))) !== digest(readFileSync(SOURCE))) {
-  throw new Error('copied entry.png does not match the source bytes — output is not deterministic');
-}
+main();
